@@ -4,6 +4,86 @@ use std::fs::{remove_file, File};
 use std::io::{Read, Write};
 use std::path::Path;
 
+#[cfg(unix)]
+fn set_file_times<P, Q>(from: P, to: Q) -> Result<()>
+where
+    P: AsRef<Path>,
+    Q: AsRef<Path>,
+{
+    let from_meta = std::fs::metadata(from)?;
+    if let Ok(atime) = from_meta.accessed() {
+        let atime = filetime::FileTime::from_system_time(atime);
+        filetime::set_file_atime(&to, atime)?;
+    }
+
+    if let Ok(mtime) = from_meta.modified() {
+        let atime = filetime::FileTime::from_system_time(mtime);
+        filetime::set_file_mtime(&to, atime)?;
+    }
+
+    Ok(())
+}
+
+// Copied from filetime (https://github.com/alexcrichton/filetime/blob/main/src/windows.rs#L34)
+#[cfg(windows)]
+fn set_file_times<P, Q>(from: P, to: Q) -> Result<()>
+where
+    P: AsRef<Path>,
+    Q: AsRef<Path>,
+{
+    use filetime::FileTime;
+    use std::fs::OpenOptions;
+    use std::os::windows::prelude::{OpenOptionsExt, AsRawHandle};
+    use windows_sys::Win32::Foundation::{FILETIME, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::*;
+
+    let f = OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(to)?;
+
+    let from_meta = std::fs::metadata(from)?;
+
+    let accessed = FileTime::from_creation_time(&from_meta);
+    let created = FileTime::from_creation_time(&from_meta);
+    let modified = from_meta.modified().ok().map(FileTime::from_system_time);
+
+    let accessed = accessed.map(to_filetime);
+    let created = created.map(to_filetime);
+    let modified = modified.map(to_filetime);
+
+    return unsafe {
+        let ret = SetFileTime(
+            f.as_raw_handle() as HANDLE,
+            created
+                .as_ref()
+                .map(|p| p as *const FILETIME)
+                .unwrap_or(std::ptr::null()),
+            accessed
+                .as_ref()
+                .map(|p| p as *const FILETIME)
+                .unwrap_or(std::ptr::null()),
+            modified
+                .as_ref()
+                .map(|p| p as *const FILETIME)
+                .unwrap_or(std::ptr::null()),
+        );
+        if ret != 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error().into())
+        }
+    };
+
+    fn to_filetime(ft: filetime::FileTime) -> FILETIME {
+        let intervals = ft.seconds() * (1_000_000_000 / 100) + ((ft.nanoseconds() as i64) / 100);
+        FILETIME {
+            dwLowDateTime: intervals as u32,
+            dwHighDateTime: (intervals >> 32) as u32,
+        }
+    }
+}
+
 // Options and flags which can be used to configure how a file will be  copied  or moved.
 pub struct CopyOptions {
     /// Sets the option true for overwrite existing files.
@@ -125,18 +205,7 @@ where
     }
 
     let bytes_copied = std::fs::copy(&from, &to)?;
-
-    // Copy the metadata of the file, safely.
-    let from_meta = std::fs::metadata(from)?;
-    if let Ok(atime) = from_meta.accessed() {
-        let atime = filetime::FileTime::from_system_time(atime);
-        filetime::set_file_atime(&to, atime)?;
-    }
-
-    if let Ok(mtime) = from_meta.modified() {
-        let atime = filetime::FileTime::from_system_time(mtime);
-        filetime::set_file_mtime(&to, atime)?;
-    }
+    set_file_times(from, to)?;
 
     Ok(bytes_copied)
 }
@@ -234,16 +303,7 @@ where
     }
 
     // Copy the metadata of the file, safely.
-    let from_meta = std::fs::metadata(from)?;
-    if let Ok(atime) = from_meta.accessed() {
-        let atime = filetime::FileTime::from_system_time(atime);
-        filetime::set_file_atime(&to, atime)?;
-    }
-
-    if let Ok(mtime) = from_meta.modified() {
-        let atime = filetime::FileTime::from_system_time(mtime);
-        filetime::set_file_mtime(&to, atime)?;
-    }
+    set_file_times(from, to)?;
 
     Ok(file_size)
 }

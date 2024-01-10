@@ -19,3 +19,10 @@ include = [
 
 [dependencies]
 filetime = "0.2.23"
+
+[target."cfg(windows)".dependencies.windows-sys]
+version = "0.52.0"
+features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+]

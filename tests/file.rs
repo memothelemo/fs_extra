@@ -19,6 +19,47 @@ where
     Ok(content1 == content2)
 }
 
+fn files_eq_with_meta<P, Q>(file1: P, file2: Q) -> Result<bool>
+where
+    P: AsRef<Path>,
+    Q: AsRef<Path>,
+{
+    let content1 = read_to_string(&file1)?;
+    let content2 = read_to_string(&file2)?;
+
+    let meta1 = std::fs::metadata(&file1)?;
+    let meta2 = std::fs::metadata(&file2)?;
+
+    #[cfg(windows)]
+    let created = meta1.created()? == meta2.created()?;
+    #[cfg(not(windows))]
+    let created = true;
+    
+    let accessed = meta1.accessed()? == meta2.accessed()?;
+    let modified = meta1.modified()? == meta2.modified()?;
+
+    Ok(content1 == content2 && accessed && created && modified)
+}
+
+#[test]
+fn it_copy_with_meta() {
+    let mut file1 = PathBuf::from(TEST_FOLDER);
+    file1.push("it_copy_with_meta");
+    file1.push("test_1.txt");
+
+    let mut file2 = PathBuf::from(TEST_FOLDER);
+    file2.push("it_copy_with_meta");
+    file2.push("test_2.txt");
+
+    fs_extra::dir::create_all(file1.parent().unwrap(), true).unwrap();
+    write_all(&file1, "Hello!").unwrap();
+
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    copy(&file1, &file2, &Default::default()).unwrap();
+
+    files_eq_with_meta(&file1, &file2).unwrap();
+}
+
 #[test]
 fn it_read_and_write_work() {
     let mut test_file = PathBuf::from(TEST_FOLDER);
