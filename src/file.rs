@@ -67,7 +67,7 @@ pub struct TransitProcess {
 }
 
 /// Copies the contents of one file to another. This function will also copy the permission
-/// bits of the original file to the destination file.
+/// bits and its metadata of the original file to the destination file.
 ///
 /// # Errors
 ///
@@ -124,12 +124,26 @@ where
         }
     }
 
-    Ok(std::fs::copy(from, to)?)
+    let bytes_copied = std::fs::copy(&from, &to)?;
+
+    // Copy the metadata of the file, safely.
+    let from_meta = std::fs::metadata(from)?;
+    if let Ok(atime) = from_meta.accessed() {
+        let atime = filetime::FileTime::from_system_time(atime);
+        filetime::set_file_atime(&to, atime)?;
+    }
+
+    if let Ok(mtime) = from_meta.modified() {
+        let atime = filetime::FileTime::from_system_time(mtime);
+        filetime::set_file_mtime(&to, atime)?;
+    }
+
+    Ok(bytes_copied)
 }
 
 /// Copies the contents of one file to another file with information about progress.
-/// This function will also copy the permission bits of the original file to the
-/// destination file.
+/// This function will also copy the permission bits and metadata of the original
+/// file to the destination file.
 ///
 /// # Errors
 ///
@@ -198,7 +212,7 @@ where
     let file_size = file_from.metadata()?.len();
     let mut copied_bytes: u64 = 0;
 
-    let mut file_to = File::create(to)?;
+    let mut file_to = File::create(&to)?;
     while !buf.is_empty() {
         match file_from.read(&mut buf) {
             Ok(0) => break,
@@ -218,11 +232,24 @@ where
             Err(e) => return Err(::std::convert::From::from(e)),
         }
     }
+
+    // Copy the metadata of the file, safely.
+    let from_meta = std::fs::metadata(from)?;
+    if let Ok(atime) = from_meta.accessed() {
+        let atime = filetime::FileTime::from_system_time(atime);
+        filetime::set_file_atime(&to, atime)?;
+    }
+
+    if let Ok(mtime) = from_meta.modified() {
+        let atime = filetime::FileTime::from_system_time(mtime);
+        filetime::set_file_mtime(&to, atime)?;
+    }
+
     Ok(file_size)
 }
 
 /// Moves a file from one place to another. This function will also copy the permission
-/// bits of the original file to the destination file.
+/// bits and metadata of the original file to the destination file.
 ///
 /// # Errors
 ///
